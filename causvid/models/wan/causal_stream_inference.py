@@ -7,19 +7,101 @@ from typing import List
 import torch
 import torch.distributed as dist
 
+
+def format_param_count(n):
+    """把参数量转成带单位的字符串"""
+    if n >= 1e9:
+        return f"{n/1e9:.2f}B"   # 十亿级 Billion
+    elif n >= 1e6:
+        return f"{n/1e6:.2f}M"   # 百万级 Million
+    elif n >= 1e3:
+        return f"{n/1e3:.2f}K"
+    else:
+        return str(n)
+
+
+def get_model_size(model):
+    """
+    返回模型参数量（带单位）和模型大小（GB，保留两位小数）
+    """
+    param_cnt = 0
+    param_size_bytes = 0
+
+    for p in model.parameters():
+        param_cnt += p.numel()
+        param_size_bytes += p.numel() * p.element_size()
+
+    # 字节 -> GB
+    param_size_gb = param_size_bytes / (1024**3)
+    param_size_gb = round(param_size_gb, 2)
+
+    return format_param_count(param_cnt), param_size_gb
+
+
+def print_model_memory(model, name, device):
+    torch.cuda.synchronize()
+    before = torch.cuda.memory_allocated(device)
+
+    model.to(device=device, dtype=torch.bfloat16)
+
+    torch.cuda.synchronize()
+    after = torch.cuda.memory_allocated(device)
+
+    diff = (after - before) / 1024**3
+    print(f"{name} loaded: {diff:.2f} GB")
+
+    return diff
+
+
+
 class CausalStreamInferencePipeline(torch.nn.Module):
     def __init__(self, args, device):
         super().__init__()
-        model_type = args.model_type
+        # model_type = args.model_type
+        model_type = "T2V-1.3B"
+
         self.device = device
         # Step 1: Initialize all models
         self.generator_model_name = getattr(
             args, "generator_name", args.model_name)
+
+        # # 第一步：根据名字获取“类”
+        # GeneratorClass = get_diffusion_wrapper(model_name=self.generator_model_name)
+        # # 第二步：实例化这个类
+        # self.generator = GeneratorClass()
+        
+
         self.generator = get_diffusion_wrapper(
-            model_name=self.generator_model_name)(model_type=model_type)
+            model_name=self.generator_model_name)()
+
         self.text_encoder = get_text_encoder_wrapper(
-            model_name=args.model_name)(model_type=model_type)
-        self.vae = get_vae_wrapper(model_name=args.model_name)(model_type=model_type)
+            model_name=args.model_name)()
+            
+        self.vae = get_vae_wrapper(model_name=args.model_name)()
+
+        gen_params, gen_gb = get_model_size(self.generator)
+        txt_params, txt_gb = get_model_size(self.text_encoder)
+        vae_params, vae_gb = get_model_size(self.vae)
+
+        # 打印
+        print('--------------------------------------------')
+        print(f"Generator:     {gen_params}, {gen_gb} GB")
+        print(f"Text Encoder:  {txt_params}, {txt_gb} GB")
+        print(f"VAE:           {vae_params}, {vae_gb} GB")
+        print('--------------------------------------------')
+
+        
+        # ---- 统计三个模型 ----
+        print("=== Model Loading Memory Usage ===")
+
+        gen_mem = print_model_memory(self.generator, "Generator", self.device)
+        txt_mem = print_model_memory(self.text_encoder, "Text Encoder", self.device)
+        vae_mem = print_model_memory(self.vae, "VAE", self.device)
+
+        total = gen_mem + txt_mem + vae_mem
+        print(f"Total model memory: {total:.2f} GB")
+
+
 
         # Step 2: Initialize all causal hyperparmeters
         self._init_denoising_step_list(args, device)
@@ -32,11 +114,15 @@ class CausalStreamInferencePipeline(torch.nn.Module):
             self.num_heads = 40
         else:
             raise ValueError(f"Model type {model_type} not supported")
+
         scale_size = 16
-        self.height = args.height//scale_size*2
-        self.width = args.width//scale_size*2
-        self.frame_seq_length = (args.height//scale_size) * (args.width//scale_size)
-        self.kv_cache_length = self.frame_seq_length*args.num_kv_cache
+        self.height = args.height // scale_size * 2
+        self.width = args.width // scale_size * 2
+
+        self.frame_seq_length = (args.height // scale_size) * (args.width // scale_size)
+        
+        # KV cache 长度 = 每帧 token 数 × 需要缓存的帧数
+        self.kv_cache_length = self.frame_seq_length * args.num_kv_cache
         self.num_sink_tokens = args.num_sink_tokens
 
         self.conditional_dict = None
@@ -67,6 +153,9 @@ class CausalStreamInferencePipeline(torch.nn.Module):
             timesteps = torch.cat((self.scheduler.timesteps.cpu(), torch.tensor([0], dtype=torch.float32))).cuda()
             self.denoising_step_list = timesteps[1000 - self.denoising_step_list]
 
+
+
+
     def _initialize_kv_cache(self, batch_size, dtype, device):
         """
         Initialize a Per-GPU KV cache for the Wan model.
@@ -74,7 +163,7 @@ class CausalStreamInferencePipeline(torch.nn.Module):
         kv_cache1 = []
         
         for i in range(self.num_transformer_blocks):
-            cache_length = self.kv_cache_length
+            cache_length = self.kv_cache_length   # self.frame_seq_length * args.num_kv_cache
             self.generator.model.blocks[i].self_attn.sink_size = self.num_sink_tokens
 
             kv_cache1.append({
@@ -85,6 +174,7 @@ class CausalStreamInferencePipeline(torch.nn.Module):
             })
 
         self.kv_cache1 = kv_cache1  # always store the clean cache
+
 
     def _initialize_crossattn_cache(self, batch_size, dtype, device):
         """
@@ -98,9 +188,10 @@ class CausalStreamInferencePipeline(torch.nn.Module):
                 "v": torch.zeros([batch_size, 512, self.num_heads, 128], dtype=dtype, device=device),
                 "is_init": False,
             })
-
         self.crossattn_cache = crossattn_cache  # always store the clean cache
     
+
+
     def prepare(
         self,
         text_prompts: List[str],
@@ -122,24 +213,44 @@ class CausalStreamInferencePipeline(torch.nn.Module):
 
         # Step 1: Initialize KV cache
         if self.kv_cache1 is None:
+            torch.cuda.synchronize(device)
+            mem_before = torch.cuda.memory_allocated(device)
+
             self._initialize_kv_cache(
                 batch_size=batch_size,
                 dtype=dtype,
                 device=device
             )
 
+            torch.cuda.synchronize(device)
+            mem_after = torch.cuda.memory_allocated(device)
+            print(f"KV cache 显存占用: {(mem_after - mem_before) / 1024**2:.2f} MB")
+
+
+            torch.cuda.synchronize(device)
+            mem_before = torch.cuda.memory_allocated(device)
+
             self._initialize_crossattn_cache(
                 batch_size=batch_size,
                 dtype=dtype,
                 device=device
             )
+
+            torch.cuda.synchronize(device)
+            mem_after = torch.cuda.memory_allocated(device)
+            print(f"CrossAttn cache 额外显存占用: {(mem_after - mem_before) / 1024**2:.2f} MB")
+
+
+
         else:
             # reset cross attn cache
             for block_index in range(self.num_transformer_blocks):
                 self.crossattn_cache[block_index]["is_init"] = False
         
+
         current_start = torch.tensor([current_start], dtype=torch.long, device=device)
         current_end = torch.tensor([current_end], dtype=torch.long, device=device)
+
 
         for index, current_timestep in enumerate(self.denoising_step_list):
             # set current timestep
@@ -175,6 +286,8 @@ class CausalStreamInferencePipeline(torch.nn.Module):
                     current_start=current_start,
                     current_end=current_end
                 )
+
+
 
         if not batch_denoise:
             return denoised_pred
@@ -234,8 +347,10 @@ class CausalStreamInferencePipeline(torch.nn.Module):
     
         return denoised_pred
     
+    # One-GPU
+    # self.hidden_states: [self.batch_size, self.num_frame_per_block, *noise.shape[2:]]
     def inference_stream(self, noise: torch.Tensor, current_start: int, current_end: int, current_step: int) -> torch.Tensor:
-
+        # [4, 1, 16, 64, 64]:     num_frame_per_block = 1
         self.hidden_states[1:] = self.hidden_states[:-1].clone()
         self.hidden_states[0] = noise[0]
 
@@ -300,6 +415,7 @@ class CausalStreamInferencePipeline(torch.nn.Module):
                     torch.ones([batch_size], device="cuda",
                                 dtype=torch.long)
                 ).unflatten(0, denoised_pred.shape[:2])
+            
             else:
                 # for getting real output
                 denoised_pred = self.generator(

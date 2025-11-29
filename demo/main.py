@@ -68,6 +68,8 @@ class App:
                     self.produce_predictions_task.cancel()
                 logging.info(f"User disconnected: {user_id}")
 
+
+
         async def handle_websocket_data(user_id: uuid.UUID):
             if not self.conn_manager.check_user(user_id):
                 return HTTPException(status_code=404, detail="User not found")
@@ -91,20 +93,24 @@ class App:
                     data = await self.conn_manager.receive_json(user_id)
                     # Refresh idle timer on any client control message
                     last_time = time.time()
+
                     # Handle stop/pause without closing socket: go idle and wait
                     if data and data.get("status") == "pause":
                         params = SimpleNamespace(**{"restart": True})
                         await self.conn_manager.update_data(user_id, params)
                         continue
+
                     if data and data.get("status") == "resume":
                         await self.conn_manager.send_json(user_id, {"status": "send_frame"})
                         continue
+
                     # Mark upload completion: after this, don't receive image bytes again
                     if data and data.get("status") == "upload_done":
                         self.conn_manager.set_video_upload_completed(user_id, True)
                         print(f"[Main] Upload completed for user {user_id}")
                         await self.conn_manager.send_json(user_id, {"status": "upload_done_ack"})
                         continue
+
                     if not data or data.get("status") != "next_frame":
                         await asyncio.sleep(THROTTLE)
                         continue
@@ -113,6 +119,7 @@ class App:
                     params = self.pipeline.InputParams(**params)
                     info = self.pipeline.Info()
                     params = SimpleNamespace(**params.dict())
+                    
                     
                     # Check if upload mode is enabled
                     is_upload_mode = params.__dict__.get('input_mode') == 'upload' or params.__dict__.get('upload_mode', False)
@@ -161,14 +168,17 @@ class App:
         @self.app.get("/api/stream/{user_id}")
         async def stream(user_id: uuid.UUID, request: Request):
             try:
-                async def push_frames_to_pipeline():
+                async def push_frames_to_pipeline():    # 给 pipeline 喂原始帧
                     last_params = SimpleNamespace()
-                    sleep_time = 1 / 20  # Initial guess
+                    sleep_time = 1 / 20  # FPS: 20 Initial guess
                     while True:
-                        # Check if upload mode is enabled
                         video_status = self.conn_manager.get_video_queue_status(user_id)
                         is_upload_mode = video_status.get("is_upload_mode", False)
                         
+                        # is_upload_mode=True = 上传视频模式(有固定长度)
+                        # is_upload_mode=False = 摄像头实时模式(无限)
+
+
                         if is_upload_mode:
                             # Upload mode: get next frame from video queue
                             video_frame = await self.conn_manager.get_next_video_frame(user_id)
@@ -177,7 +187,7 @@ class App:
                                 params = SimpleNamespace()
                                 params.image = bytes_to_pil(video_frame)
                                 # Copy other parameters
-                                if vars(last_params):
+                                if vars(last_params): # vars(obj) = obj.__dict__
                                     for key, value in last_params.__dict__.items():
                                         if key != 'image':
                                             setattr(params, key, value)
@@ -191,6 +201,8 @@ class App:
                             else:
                                 # No frame available, wait a bit
                                 await asyncio.sleep(sleep_time)
+                        
+
                         else:
                             # Camera mode: normal processing
                             params = await self.conn_manager.get_latest_data(user_id)
@@ -216,6 +228,9 @@ class App:
 
                     # Initialize moving average frame interval
                     ema_frame_interval = sleep_time
+
+                    last_fps_log_time = time.time() # 上一次打印fps的时间，必须最少间隔1s才打印，防止抖动
+
                     while True:
                         queue_size = await self.conn_manager.get_output_queue_size(user_id)
                         if queue_size > last_queue_size:
@@ -235,21 +250,38 @@ class App:
                             if frame is None:
                                 break
                             yield frame
+
                             if not is_firefox(request.headers["user-agent"]):
                                 yield frame
+
+                            now = time.time()
+
                             if last_frame_time is None:
-                                last_frame_time = time.time()
+                                last_frame_time = now
                             else:
-                                frame_time_list.append(time.time() - last_frame_time)
+                                # 每帧生成的时间间隔（秒）
+                                frame_time_list.append(now - last_frame_time)
                                 if len(frame_time_list) > 100:
-                                    frame_time_list.pop(0)
-                                last_frame_time = time.time()
+                                    frame_time_list.pop(0)  # pop() 的参数就是要删除的元素的下标（index）
+
+                                # 至少一秒计算FPS，因为单帧的 interval 非常不稳定
+                                if now - last_fps_log_time >= 1.0:
+                                    avg_interval = sum(frame_time_list) / len(frame_time_list)   
+                                    fps = 1.0 / avg_interval if avg_interval > 0 else 0.0
+                                    print(f"[Stream FPS] {fps:.2f}")
+                                    last_fps_log_time = now
+                                
+                                last_frame_time = now
+                    
+
                         except Exception as e:
                             print(f"Frame fetch error: {e}")
                             break
 
                         await asyncio.sleep(sleep_time)
 
+
+                # 异步任务
                 def produce_predictions(user_id, loop, stop_event):
                     while not stop_event.is_set():
                         images = self.pipeline.produce_outputs()

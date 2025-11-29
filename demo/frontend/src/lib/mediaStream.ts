@@ -5,7 +5,9 @@ export enum MediaStreamStatusEnum {
     CONNECTED = "connected",
     DISCONNECTED = "disconnected",
 }
-export const onFrameChangeStore: Writable<{ blob: Blob }> = writable({ blob: new Blob() });
+export const onFrameChangeStore = writable({
+    blob: null
+});
 
 export const mediaDevices = writable<MediaDeviceInfo[]>([]);
 export const mediaStreamStatus = writable(MediaStreamStatusEnum.INIT);

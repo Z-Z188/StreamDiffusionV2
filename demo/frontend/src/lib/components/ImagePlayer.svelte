@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
+  import { browser } from '$app/environment';
   import { lcmLiveStatus, LCMLiveStatus, streamId } from '$lib/lcmLive';
   import { getPipelineValues } from '$lib/store';
 
@@ -8,7 +10,28 @@
 
   $: isLCMRunning = $lcmLiveStatus !== LCMLiveStatus.DISCONNECTED;
   $: console.log('isLCMRunning', isLCMRunning);
+
   let imageEl: HTMLImageElement;
+
+  // ✅ 用于拼接正确的 API 前缀，本地是 ""，KML 上是 "/proxy/7860"
+  let basePath = '';
+  let streamSrc = '';
+
+  onMount(() => {
+    if (browser) {
+      // 去掉末尾的 /
+      basePath = window.location.pathname.replace(/\/$/, '');
+    }
+  });
+
+  // ✅ 当 streamId 变化时，更新图片地址
+  $: if ($streamId && isLCMRunning) {
+    // 加一个时间戳防缓存
+    streamSrc = `${basePath}/api/stream/${$streamId}?t=${Date.now()}`;
+  } else {
+    streamSrc = '';
+  }
+
   async function takeSnapshot() {
     if (isLCMRunning) {
       await snapImage(imageEl, {
@@ -25,11 +48,11 @@
   class="relative mx-auto aspect-square max-w-lg self-center overflow-hidden rounded-lg border border-slate-300"
 >
   <!-- svelte-ignore a11y-missing-attribute -->
-  {#if isLCMRunning && $streamId}
+  {#if isLCMRunning && $streamId && streamSrc}
     <img
       bind:this={imageEl}
       class="aspect-square w-full rounded-lg"
-      src={'/api/stream/' + $streamId + '?t=' + Date.now()}
+      src={streamSrc}
     />
     <div class="absolute bottom-1 right-1">
       <Button

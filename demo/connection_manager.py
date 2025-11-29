@@ -33,6 +33,7 @@ class ConnectionManager:
             await websocket.close()
             raise ServerFullException("Server is full")
         print(f"[ConnectionManager] New user connected: {user_id}")
+
         self.active_connections[user_id] = {
             "websocket": websocket,
             "queue": asyncio.Queue(),
@@ -215,6 +216,7 @@ class ConnectionManager:
             return session.get("video_upload_completed", False)
         return False
 
+
     # Add video frame to queue (upload mode only)
     async def add_video_frame(self, user_id: UUID, frame_data: bytes):
         session = self.active_connections.get(user_id)
@@ -224,6 +226,7 @@ class ConnectionManager:
             session["video_total_frames"] = len(session["video_frames"])
             # Add to processing queue
             await session["video_frame_queue"].put(frame_data)
+
 
     # Get next video frame with automatic loop (upload mode only)
     async def get_next_video_frame(self, user_id: UUID) -> bytes:
@@ -240,7 +243,8 @@ class ConnectionManager:
         
         # Get next frame
         if not session["video_frame_queue"].empty():
-            frame = await session["video_frame_queue"].get()
+            frame = await session["video_frame_queue"].get()    # .put() → 放入一个对象
+                                                                # .get() → 取出刚好一个对象
             session["video_queue_index"] += 1
             return frame
         
@@ -248,12 +252,13 @@ class ConnectionManager:
         await asyncio.sleep(0)
         return None
 
+
     # Get video queue status (upload mode only)
     def get_video_queue_status(self, user_id: UUID) -> dict:
         session = self.active_connections.get(user_id)
         if session and session["is_upload_mode"]:
             return {
-                "is_upload_mode": session["is_upload_mode"],
+                "is_upload_mode": session["is_upload_mode"],   # True
                 "video_total_frames": session["video_total_frames"],
                 "current_index": session["video_queue_index"],
                 "queue_size": session["video_frame_queue"].qsize()

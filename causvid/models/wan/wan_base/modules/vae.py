@@ -551,17 +551,18 @@ class WanVAE_(nn.Module):
             self.clear_cache_encode()
             self._enc_conv_idx = [0]
             out = self.encoder(
-                x[:, :, :1, :, :],
+                x[:, :, :1, :, :],  #  # 第 1 帧
                 feat_cache=self._enc_feat_map,
                 feat_idx=self._enc_conv_idx,
                 )
             self._enc_conv_idx = [0]
             out_ = self.encoder(
-                x[:, :, 1:, :, :],
+                x[:, :, 1:, :, :],  # # 剩余帧（T-1帧)
                 feat_cache=self._enc_feat_map,
                 feat_idx=self._enc_conv_idx,
                 )
             out = torch.cat([out, out_], 2)
+
         else:
             out=[]
             for i in range(t//4):

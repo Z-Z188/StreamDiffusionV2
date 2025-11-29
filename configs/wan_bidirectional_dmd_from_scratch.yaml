@@ -3,12 +3,14 @@ generator_fsdp_wrap_strategy: size
 real_score_fsdp_wrap_strategy: size
 fake_score_fsdp_wrap_strategy: size
 text_encoder_fsdp_wrap_strategy: size
+
 generator_grad:
   model: true
 real_score_grad:
   model: false
 fake_score_grad:
   model: true
+  
 denoising_step_list:
 - 1000
 - 757

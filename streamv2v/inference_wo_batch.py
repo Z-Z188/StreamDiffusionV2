@@ -151,6 +151,9 @@ class SingleGPUInferencePipeline:
         save_results = 0
 
         fps_list = []
+        dit_fps_list = []
+        vae_enc_fps_list = []
+        vae_dec_fps_list = []
         
         # Initialize variables
         start_idx = 0
@@ -182,7 +185,11 @@ class SingleGPUInferencePipeline:
                 noise=noisy_latents,
                 current_start=current_start,
                 current_end=current_end,
-                batch_denoise=False,
+
+
+
+                # 和用batch进行推理的区别, 默认值是True
+                batch_denoise=False,  
             )
             
             # Save first result - only start decoding after num_steps
@@ -192,6 +199,9 @@ class SingleGPUInferencePipeline:
             results[save_results] = video.cpu().float().numpy()
             save_results += 1
         
+
+
+
         # Process remaining chunks
         while self.processed < num_chuncks + num_steps - 1:
             # Update indices
@@ -207,17 +217,27 @@ class SingleGPUInferencePipeline:
                     input_video_original, end_idx, chunck_size, noise_scale
                 )
                 
+                torch.cuda.synchronize()
+                vae_enc_start_time = time.time()
                 # VAE encoding
                 latents = self.pipeline.vae.model.stream_encode(inp)
+
+                if self.processed > 3:
+                    torch.cuda.synchronize()
+                    vae_enc_fps_list.append(chunck_size / (time.time() - vae_enc_start_time))
+
                 latents = latents.transpose(2, 1).contiguous().to(dtype=torch.bfloat16)
                 
                 noise = torch.randn_like(latents)
                 noisy_latents = noise * noise_scale + latents * (1 - noise_scale)
 
-            if current_start//self.pipeline.frame_seq_length >= 50:
+            if current_start // self.pipeline.frame_seq_length >= 50:
                 current_start = self.pipeline.kv_cache_length - self.pipeline.frame_seq_length
                 current_end = current_start + (chunck_size // 4) * self.pipeline.frame_seq_length
                 
+            torch.cuda.synchronize()
+            dit_start_time = time.time()
+
             # DiT inference - using input mode to process all 30 blocks
             denoised_pred = self.pipeline.inference_wo_batch(
                 noise=noisy_latents,
@@ -225,11 +245,24 @@ class SingleGPUInferencePipeline:
                 current_end=current_end,
                 current_step=current_step,
             )
+
+            if self.processed > 3:
+                torch.cuda.synchronize()
+                dit_fps_list.append(chunck_size/(time.time() - dit_start_time))
             
             self.processed += 1
             
+        
+            torch.cuda.synchronize()
+            vae_dec_start_time = time.time()
+   
             # VAE decoding - only start decoding after num_steps
+            # batch_size = 1, 取-1 is ok
             video = self.pipeline.vae.stream_decode_to_pixel(denoised_pred[[-1]])
+            if self.processed > 3:
+                torch.cuda.synchronize()
+                vae_dec_fps_list.append(chunck_size/(time.time() - vae_dec_start_time))
+
             video = (video * 0.5 + 0.5).clamp(0, 1)
             video = video[0].permute(0, 2, 3, 1).contiguous()
             
@@ -249,7 +282,14 @@ class SingleGPUInferencePipeline:
         video_list = [results[i] for i in range(num_chuncks)]
         video = np.concatenate(video_list, axis=0)
         fps_avg = np.mean(np.array(fps_list))
-        self.logger.info(f"Video shape: {video.shape}, Average FPS: {fps_avg:.4f}")
+        self.logger.info(
+            f"DiT Average FPS: {np.mean(np.array(dit_fps_list)):.4f}")
+        self.logger.info(
+            f"VAE Enc Average FPS: {np.mean(np.array(vae_enc_fps_list)):.4f}")
+        self.logger.info(
+            f"VAE Dec Average FPS: {np.mean(np.array(vae_dec_fps_list)):.4f}")
+        self.logger.info(
+            f"Video shape: {video.shape}, Average FPS: {fps_avg:.4f}")
         
         output_path = os.path.join(output_folder, f"output_{0:03d}.mp4")
         export_to_video(video, output_path, fps=fps)

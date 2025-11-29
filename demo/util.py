@@ -48,7 +48,7 @@ def read_images_from_queue(queue, num_frames_needed, device, stop_event=None, pr
     while queue.qsize() < num_frames_needed:
         if stop_event and stop_event.is_set():
             return None
-        time.sleep(0.05)
+        time.sleep(0.05)    # 等待 50ms，让 CPU 休息，同时等队列长大
 
     if prefer_latest:
         read_size = queue.qsize()

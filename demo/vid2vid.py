@@ -141,12 +141,12 @@ class Pipeline:
 
 
 def generate_process(args, prompt_dict, prepare_event, restart_event, stop_event, input_queue, output_queue):
-    torch.set_grad_enabled(False)
+    torch.set_grad_enabled(False) # 关闭 PyTorch 的自动求导（autograd）机制
     device = torch.device(f"cuda:{args.gpu_ids.split(',')[0]}")
 
     pipeline_manager = SingleGPUInferencePipeline(args, device)
     pipeline_manager.load_model(args.checkpoint_folder)
-    num_steps = len(pipeline_manager.pipeline.denoising_step_list)
+    num_steps = len(pipeline_manager.pipeline.denoising_step_list)  # pipeline: CausalStreamInferencePipeline
     first_batch_num_frames = 5
     chunk_size = 4
     is_running = False
@@ -164,6 +164,7 @@ def generate_process(args, prompt_dict, prepare_event, restart_event, stop_event
             images = read_images_from_queue(input_queue, first_batch_num_frames, device, stop_event, prefer_latest=True)
 
             noise_scale = args.noise_scale
+
             noise_scale, current_step = compute_noise_scale_and_step(
                 input_video_original=images,
                 end_idx=first_batch_num_frames,
@@ -179,6 +180,7 @@ def generate_process(args, prompt_dict, prepare_event, restart_event, stop_event
             pipeline_manager.pipeline.hidden_states = None
             latents = pipeline_manager.pipeline.vae.model.stream_encode(images)
             latents = latents.transpose(2, 1).contiguous().to(dtype=torch.bfloat16)
+
             noise = torch.randn_like(latents)
             noisy_latents = noise * noise_scale + latents * (1 - noise_scale)
 
@@ -188,6 +190,7 @@ def generate_process(args, prompt_dict, prepare_event, restart_event, stop_event
             if pipeline_manager.pipeline.kv_cache1 is not None:
                 pipeline_manager.pipeline.reset_kv_cache()
                 pipeline_manager.pipeline.reset_crossattn_cache()
+                
             denoised_pred = pipeline_manager.prepare_pipeline(
                 text_prompts=[prompt],
                 noise=noisy_latents,
@@ -213,6 +216,8 @@ def generate_process(args, prompt_dict, prepare_event, restart_event, stop_event
 
         images = read_images_from_queue(input_queue, chunk_size, device, stop_event)
 
+
+        # 传入的参数中也有noise_scale，因为这个计算是一个EMA
         noise_scale, current_step = compute_noise_scale_and_step(
             input_video_original=torch.cat([last_image, images], dim=2),
             end_idx=first_batch_num_frames,

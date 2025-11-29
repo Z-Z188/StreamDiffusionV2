@@ -8,4 +8,13 @@ else
     echo -e "\033[1;31m\nfrontend build failed\n\033[0m" >&2  exit 1
 fi
 cd ../
+
+
+# python -m debugpy --listen 5678 --wait-for-client main.py --port 7860 --host 0.0.0.0 --num_gpus 1 --step 1
 python main.py --port 7860 --host 0.0.0.0 --num_gpus 1 --step 1
+
+
+# python main.py --port 7860 --host 0.0.0.0 --num_gpus 1 --step 2
+# python main.py --port 7860 --host 0.0.0.0 --num_gpus 1 --step 4
+
+# Note: --step sets how many denoising steps are used during inference.
