@@ -114,8 +114,7 @@ class SingleGPUInferencePipeline:
         # Initialize pipeline
         self.pipeline = CausalStreamInferencePipeline(
             config, device=str(device))
-        self.pipeline.to(device=str(device), dtype=torch.bfloat16)
-
+        # self.pipeline.to(device=str(device), dtype=torch.bfloat16)
 
 
 
@@ -312,22 +311,22 @@ class SingleGPUInferencePipeline:
                 torch.cuda.synchronize()
                 vae_dec_start_time = time.time()
                 
-                torch.cuda.synchronize()
-                mem_before = torch.cuda.memory_allocated(device=self.device)
-                print(f"Before decode: {mem_before / 1024**3:.2f} GB")  # 20.03 GB
+                # torch.cuda.synchronize()
+                # mem_before = torch.cuda.memory_allocated(device=self.device)
+                # print(f"Before decode: {mem_before / 1024**3:.2f} GB")  # 20.03 GB
 
-                mem_before = torch.cuda.memory_reserved(device=self.device)
-                print(f"Before decode: {mem_before / 1024**3:.2f} GB") # 23.17 GB
+                # mem_before = torch.cuda.memory_reserved(device=self.device)
+                # print(f"Before decode: {mem_before / 1024**3:.2f} GB") # 23.17 GB
 
                 video = self.pipeline.vae.stream_decode_to_pixel(
                     denoised_pred[[-1]])
 
-                torch.cuda.synchronize()
-                mem_after = torch.cuda.memory_allocated(device=self.device)
-                print(f"After decode:, {mem_after / 1024**3:.2f} GB")   # 20.03 GB
+                # torch.cuda.synchronize()
+                # mem_after = torch.cuda.memory_allocated(device=self.device)
+                # print(f"After decode:, {mem_after / 1024**3:.2f} GB")   # 20.03 GB
 
-                mem_after = torch.cuda.memory_reserved(device=self.device)
-                print(f"After decode:, {mem_after / 1024**3:.2f} GB")   # 23.17 GB
+                # mem_after = torch.cuda.memory_reserved(device=self.device)
+                # print(f"After decode:, {mem_after / 1024**3:.2f} GB")   # 23.17 GB
 
 
 
@@ -425,9 +424,11 @@ def main():
     # Load input video
     if args.video_path is not None:
         input_video_original = load_mp4_as_tensor(
-            args.video_path, resize_hw=(args.height, args.width)).unsqueeze(0)
+            args.video_path).unsqueeze(0)
         print(f"Input video tensor shape: {input_video_original.shape}")
         b, c, t, h, w = input_video_original.shape
+        config.height = h
+        config.width = w
         if input_video_original.dtype != torch.bfloat16:
             input_video_original = input_video_original.to(
                 dtype=torch.bfloat16).to(device)
@@ -460,11 +461,25 @@ def main():
 
 
 if __name__ == "__main__":
-    torch.cuda.synchronize()              # 清空可能的异步任务
-    torch.cuda.reset_peak_memory_stats()  # 在 main 开始前清空峰值统计
+    # ----------- 清空 CUDA 异步/显存峰值 -----------
+    torch.cuda.synchronize()
+    torch.cuda.reset_peak_memory_stats()
 
-    main()                                # <-- 你的整个程序
+    # ----------- 开始计时 -----------
+    start_time = time.time()
 
-    torch.cuda.synchronize()              # 确保全部 CUDA 操作完成
+    # ----------- 运行你的程序 -----------
+    main()
+
+    # ----------- 结束计时 -----------
+    torch.cuda.synchronize()   # 等所有 GPU 活动结束
+    end_time = time.time()
+    end_time = time.time()
+
+    # ----------- 打印时间 -----------
+    total_time = end_time - start_time
+    print(f"Whole program total time: {total_time:.2f} seconds")
+
+    # ----------- 打印峰值显存 -----------
     peak = torch.cuda.max_memory_allocated()
     print(f"Whole program peak memory: {peak/1024**3:.2f} GB")

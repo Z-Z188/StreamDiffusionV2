@@ -15,8 +15,8 @@ import os
 import torch.distributed as dist
 import time
 
-repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-
+# repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+repo_root = "/media/cephfs/video/VideoUsers/thu2025/zhurui11/StreamDiffusionV2"
 
 class WanTextEncoder(TextEncoderInterface):
     def __init__(self) -> None:
@@ -26,12 +26,13 @@ class WanTextEncoder(TextEncoderInterface):
             encoder_only=True,
             return_tokenizer=False,
             dtype=torch.float32,
-            device=torch.device('cpu')
+            device=torch.device('meta')
         ).eval().requires_grad_(False)
+        
         self.text_encoder.load_state_dict(
             torch.load(os.path.join(repo_root, "wan_models/Wan2.1-T2V-1.3B/models_t5_umt5-xxl-enc-bf16.pth"),
-                       map_location='cpu', weights_only=False)
-        )
+                       map_location='cpu', weights_only=False, mmap=True),
+        assign=True)
 
         self.tokenizer = HuggingfaceTokenizer(
             name=os.path.join(repo_root, "wan_models/Wan2.1-T2V-1.3B/google/umt5-xxl/"), seq_len=512, clean='whitespace')
@@ -317,6 +318,7 @@ class CausalWanDiffusionWrapper(WanDiffusionWrapper):
 
         self.model = CausalWanModel.from_pretrained(
             os.path.join(repo_root, "wan_models/Wan2.1-T2V-1.3B/"))
+
         self.model.eval()
 
         self.uniform_timestep = False

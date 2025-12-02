@@ -6,7 +6,7 @@ from causvid.models import (
 from typing import List
 import torch
 import torch.distributed as dist
-
+import time
 
 def format_param_count(n):
     """把参数量转成带单位的字符串"""
@@ -65,41 +65,61 @@ class CausalStreamInferencePipeline(torch.nn.Module):
         self.generator_model_name = getattr(
             args, "generator_name", args.model_name)
 
-        # # 第一步：根据名字获取“类”
-        # GeneratorClass = get_diffusion_wrapper(model_name=self.generator_model_name)
-        # # 第二步：实例化这个类
-        # self.generator = GeneratorClass()
-        
 
-        self.generator = get_diffusion_wrapper(
-            model_name=self.generator_model_name)()
+        torch.cuda.synchronize()
+        start_time = time.time()
 
         self.text_encoder = get_text_encoder_wrapper(
             model_name=args.model_name)()
-            
+
+        torch.cuda.synchronize()
+        end_time = time.time()
+        print(f"Text-Encoder load time: {end_time - start_time:.3f} seconds")
+ 
+
+
+        torch.cuda.synchronize()
+        start_time = time.time()
+
         self.vae = get_vae_wrapper(model_name=args.model_name)()
 
-        gen_params, gen_gb = get_model_size(self.generator)
-        txt_params, txt_gb = get_model_size(self.text_encoder)
-        vae_params, vae_gb = get_model_size(self.vae)
+        torch.cuda.synchronize()
+        end_time = time.time()
+        print(f"VAE load time: {end_time - start_time:.3f} seconds")
 
-        # 打印
-        print('--------------------------------------------')
-        print(f"Generator:     {gen_params}, {gen_gb} GB")
-        print(f"Text Encoder:  {txt_params}, {txt_gb} GB")
-        print(f"VAE:           {vae_params}, {vae_gb} GB")
-        print('--------------------------------------------')
+
+        # # 第一步：根据名字获取“类”
+        # GeneratorClass = get_diffusion_wrapper(model_name=self.generator_model_name)
+        # # 第二步：实例化这个类
+        # with torch.device("meta"):  # 这是不行的
+        #     self.generator = GeneratorClass()
+        
+        self.generator = get_diffusion_wrapper(
+            model_name=self.generator_model_name)()
 
         
-        # ---- 统计三个模型 ----
-        print("=== Model Loading Memory Usage ===")
 
-        gen_mem = print_model_memory(self.generator, "Generator", self.device)
-        txt_mem = print_model_memory(self.text_encoder, "Text Encoder", self.device)
-        vae_mem = print_model_memory(self.vae, "VAE", self.device)
+        # gen_params, gen_gb = get_model_size(self.generator)
+        # txt_params, txt_gb = get_model_size(self.text_encoder)
+        # vae_params, vae_gb = get_model_size(self.vae)
 
-        total = gen_mem + txt_mem + vae_mem
-        print(f"Total model memory: {total:.2f} GB")
+        # # 打印
+        # print('--------------------------------------------')
+        # print(f"Generator:     {gen_params}, {gen_gb} GB")
+        # print(f"Text Encoder:  {txt_params}, {txt_gb} GB")
+        # print(f"VAE:           {vae_params}, {vae_gb} GB")
+        # print('--------------------------------------------')
+
+        
+        # # ---- 统计三个模型 ----
+        # print("=== Model Loading Memory Usage ===")
+
+        # gen_mem = print_model_memory(self.generator, "Generator", self.device)
+        # txt_mem = print_model_memory(self.text_encoder, "Text Encoder", self.device)
+        # vae_mem = print_model_memory(self.vae, "VAE", self.device)
+
+        # total = gen_mem + txt_mem + vae_mem
+        # print(f"Total model memory: {total:.2f} GB")
 
 
 
@@ -139,7 +159,17 @@ class CausalStreamInferencePipeline(torch.nn.Module):
         if self.num_frame_per_block > 1:
             self.generator.model.num_frame_per_block = self.num_frame_per_block
 
-        self.generator.model.to(self.device)
+
+        self.generator.model.to(self.device, dtype=torch.bfloat16)
+        self.text_encoder.to(self.device, dtype=torch.bfloat16)
+
+
+        # module.to(...) 只管 参数 + buffer，不管普通属性。
+        # 两者都不会移动vae中的mean和std，因为没有注册为buffer
+        self.vae.model.to(self.device, dtype=torch.bfloat16)
+        # self.vae.to(self.device, dtype=torch.bfloat16)
+
+
 
     def _init_denoising_step_list(self, args, device):
         self.denoising_step_list = torch.tensor(
@@ -207,9 +237,19 @@ class CausalStreamInferencePipeline(torch.nn.Module):
         self.device = device
         batch_size = noise.shape[0]
 
+        torch.cuda.synchronize()
+        start_time = time.time()
+
         self.conditional_dict = self.text_encoder(
             text_prompts=text_prompts
         )
+
+        torch.cuda.synchronize()
+        end_time = time.time()
+        print("-" * 20)
+        print(f"text-to-embedding time: {end_time - start_time:.3f} seconds")
+        print("-" * 20)
+
 
         # Step 1: Initialize KV cache
         if self.kv_cache1 is None:

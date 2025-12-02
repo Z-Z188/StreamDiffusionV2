@@ -696,8 +696,11 @@ def _video_vae(pretrained_path=None, z_dim=None, device='cpu', **kwargs):
 
     # load checkpoint
     logging.info(f'loading {pretrained_path}')
+
+    # 不用mmap=True，加载vae是1.136s
+    # 用了是0.12s
     model.load_state_dict(
-        torch.load(pretrained_path, map_location=device), assign=True)
+        torch.load(pretrained_path, map_location=device, mmap=True), assign=True)
 
     return model
 

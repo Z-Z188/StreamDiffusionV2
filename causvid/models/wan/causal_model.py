@@ -283,7 +283,7 @@ class CausalWanAttentionBlock(nn.Module):
 
 
         x = x + (y.unflatten(dim=1, sizes=(num_frames, frame_seqlen))
-                 * e[2]).flatten(1, 2)
+            * e[2]).flatten(1, 2)
 
         # cross-attention & ffn function
         def cross_attn_ffn(x, context, context_lens, e, crossattn_cache=None):
@@ -594,6 +594,8 @@ class CausalWanModel(ModelMixin, ConfigMixin):
 
         # context
         context_lens = None
+        context = context.to(device, dtype=torch.bfloat16)
+        
         context = self.text_embedding(
             torch.stack([
                 torch.cat(
@@ -719,6 +721,7 @@ class CausalWanModel(ModelMixin, ConfigMixin):
 
         # context
         context_lens = None
+        
         context = self.text_embedding(
             torch.stack([
                 torch.cat(
