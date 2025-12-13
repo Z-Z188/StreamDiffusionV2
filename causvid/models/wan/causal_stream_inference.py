@@ -65,6 +65,26 @@ class CausalStreamInferencePipeline(torch.nn.Module):
         self.generator_model_name = getattr(
             args, "generator_name", args.model_name)
 
+        # # 第一步：根据名字获取“类”
+        # GeneratorClass = get_diffusion_wrapper(model_name=self.generator_model_name)
+        # # 第二步：实例化这个类
+        # with torch.device("meta"):  # 这是不行的
+        #     self.generator = GeneratorClass()
+        
+
+        torch.cuda.synchronize()
+        start_time = time.time()
+
+        self.generator = get_diffusion_wrapper(
+            model_name=self.generator_model_name)()
+
+        torch.cuda.synchronize()
+        end_time = time.time()
+        # print('-' * 40)
+        # print('-' * 40)
+        print(f"Diffusion Model load time: {end_time - start_time:.3f} seconds")
+        # print('-' * 40)
+        # print('-' * 40)
 
         torch.cuda.synchronize()
         start_time = time.time()
@@ -74,7 +94,7 @@ class CausalStreamInferencePipeline(torch.nn.Module):
 
         torch.cuda.synchronize()
         end_time = time.time()
-        print(f"Text-Encoder load time: {end_time - start_time:.3f} seconds")
+        print(f"Text Encoder load time: {end_time - start_time:.3f} seconds")
  
 
 
@@ -87,17 +107,6 @@ class CausalStreamInferencePipeline(torch.nn.Module):
         end_time = time.time()
         print(f"VAE load time: {end_time - start_time:.3f} seconds")
 
-
-        # # 第一步：根据名字获取“类”
-        # GeneratorClass = get_diffusion_wrapper(model_name=self.generator_model_name)
-        # # 第二步：实例化这个类
-        # with torch.device("meta"):  # 这是不行的
-        #     self.generator = GeneratorClass()
-        
-        self.generator = get_diffusion_wrapper(
-            model_name=self.generator_model_name)()
-
-        
 
         # gen_params, gen_gb = get_model_size(self.generator)
         # txt_params, txt_gb = get_model_size(self.text_encoder)
@@ -144,6 +153,7 @@ class CausalStreamInferencePipeline(torch.nn.Module):
         # KV cache 长度 = 每帧 token 数 × 需要缓存的帧数
         self.kv_cache_length = self.frame_seq_length * args.num_kv_cache
         self.num_sink_tokens = args.num_sink_tokens
+        self.adapt_sink_threshold = args.adapt_sink_threshold
 
         self.conditional_dict = None
         self.kv_cache1 = None
@@ -195,6 +205,7 @@ class CausalStreamInferencePipeline(torch.nn.Module):
         for i in range(self.num_transformer_blocks):
             cache_length = self.kv_cache_length   # self.frame_seq_length * args.num_kv_cache
             self.generator.model.blocks[i].self_attn.sink_size = self.num_sink_tokens
+            self.generator.model.blocks[i].self_attn.adapt_sink_thr = self.adapt_sink_threshold
 
             kv_cache1.append({
                 "k": torch.zeros([batch_size, cache_length, self.num_heads, 128], dtype=dtype, device=device),

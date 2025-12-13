@@ -1,12 +1,11 @@
-# import cv2
+import cv2
 
-# cap = cv2.VideoCapture('original.mp4')  # 81 frames, 16 FPS
+cap = cv2.VideoCapture("bird.mp4")
+fps = cap.get(cv2.CAP_PROP_FPS)
+frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+duration = frame_count / fps
 
-# print("帧率 FPS:", cap.get(cv2.CAP_PROP_FPS))
-# print("总帧数:", cap.get(cv2.CAP_PROP_FRAME_COUNT))
-# print("宽度:", cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-# print("高度:", cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-# print("时长 (秒):", cap.get(cv2.CAP_PROP_FRAME_COUNT) / cap.get(cv2.CAP_PROP_FPS))
-
-# cap.release()
-
+print("FPS:", fps)
+print("Frame count:", frame_count)
+print("Duration (s):", duration)
+cap.release()

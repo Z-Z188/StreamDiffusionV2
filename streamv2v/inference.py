@@ -10,6 +10,7 @@ inference pipeline on a single GPU:
 from debugUtil import enable_custom_repr
 enable_custom_repr()
 
+import sys
 from causvid.models.wan.causal_stream_inference import CausalStreamInferencePipeline
 from diffusers.utils import export_to_video
 from causvid.data import TextDataset
@@ -24,6 +25,18 @@ import logging
 import torchvision
 import torchvision.transforms.functional as TF
 from einops import rearrange
+
+import random
+def set_seed(seed: int = 42):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
 
 # import sys
 # print(sys.path)
@@ -68,16 +81,14 @@ def load_mp4_as_tensor(
 
     return video  # [C, T, H, W]
 
-
-def compute_noise_scale_and_step(input_video_original: torch.Tensor, end_idx: int, chunck_size: int, noise_scale: float):
+def compute_noise_scale_and_step(input_video_original: torch.Tensor, end_idx: int, chunck_size: int, noise_scale: float, init_noise_scale: float):
     """Compute adaptive noise scale and current step based on video content."""
-    l2_dist = (input_video_original[:, :, end_idx-chunck_size:end_idx] -
+    l2_dist=(input_video_original[:, :, end_idx-chunck_size:end_idx] -
                input_video_original[:, :, end_idx-chunck_size - 1:end_idx - 1]) ** 2
     l2_dist = (torch.sqrt(l2_dist.mean(dim=(0, 1, 3, 4))).max()/0.2).clamp(0, 1)
-    new_noise_scale = (0.9 - 0.2 * l2_dist.item()) * 0.9 + noise_scale * 0.1
+    new_noise_scale = (init_noise_scale - 0.1 * l2_dist.item()) * 0.9 + noise_scale * 0.1
     current_step = int(1000 * new_noise_scale) - 100
     return new_noise_scale, current_step
-
 
 class SingleGPUInferencePipeline:
     """
@@ -125,11 +136,15 @@ class SingleGPUInferencePipeline:
 
         self.logger.info("Single GPU inference pipeline manager initialized")
 
+
+
     def load_model(self, checkpoint_folder: str):
         """Load the model from checkpoint."""
         ckpt_path = os.path.join(checkpoint_folder, "model.pt")
         self.logger.info(f"Loading checkpoint from {ckpt_path}")
-        ckpt = torch.load(ckpt_path, map_location="cpu")
+
+        # ckpt = torch.load(ckpt_path, map_location="cpu")
+        ckpt = torch.load(ckpt_path, map_location="cpu", mmap=True)
 
         # Decide which key holds the generator state dict
         if isinstance(ckpt, dict):
@@ -200,13 +215,9 @@ class SingleGPUInferencePipeline:
         # Process first chunk (initialization)
         if input_video_original is not None:
             inp = input_video_original[:, :, start_idx:end_idx]
-
-            noise_scale, current_step = compute_noise_scale_and_step(
-                input_video_original, end_idx, chunck_size, noise_scale
-            )
-
+            
             # VAE encoding
-            latents = self.pipeline.vae.model.stream_encode(inp)
+            latents = self.pipeline.vae.stream_encode(inp)
             latents = latents.transpose(
                 2, 1).contiguous().to(dtype=torch.bfloat16)
 
@@ -233,8 +244,9 @@ class SingleGPUInferencePipeline:
         video = video[0].permute(0, 2, 3, 1).contiguous()
         results[save_results] = video.cpu().float().numpy()
         save_results += 1
-
-
+        
+        init_noise_scale = noise_scale
+        
         # Process remaining chunks
         while self.processed < num_chunks + num_steps - 1:
             # Update indices
@@ -250,7 +262,7 @@ class SingleGPUInferencePipeline:
                 inp = input_video_original[:, :, start_idx:end_idx]
 
                 noise_scale, current_step = compute_noise_scale_and_step(
-                    input_video_original, end_idx, chunck_size, noise_scale
+                    input_video_original, end_idx, chunck_size, noise_scale, init_noise_scale
                 )
 
                 torch.cuda.synchronize()
@@ -258,7 +270,7 @@ class SingleGPUInferencePipeline:
 
                 # VAE encoding:
                 # time 4倍压缩 (4帧变1帧), H and W 8倍压缩, Channels: 3 -> 16
-                latents = self.pipeline.vae.model.stream_encode(inp)
+                latents = self.pipeline.vae.stream_encode(inp)
 
                 if self.processed > 3:
                     torch.cuda.synchronize()
@@ -397,7 +409,10 @@ def main():
                         help="Video length (number of frames)")
     parser.add_argument("--fixed_noise_scale",
                         action="store_true", default=False)
+    parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
+
+    set_seed(args.seed)
 
     torch.set_grad_enabled(False)
 
@@ -424,7 +439,7 @@ def main():
     # Load input video
     if args.video_path is not None:
         input_video_original = load_mp4_as_tensor(
-            args.video_path).unsqueeze(0)
+            args.video_path, resize_hw=(args.height, args.width)).unsqueeze(0)
         print(f"Input video tensor shape: {input_video_original.shape}")
         b, c, t, h, w = input_video_original.shape
         config.height = h
@@ -442,11 +457,29 @@ def main():
 
     # Initialize pipeline manager
     pipeline_manager = SingleGPUInferencePipeline(config, device)
-    pipeline_manager.load_model(args.checkpoint_folder)
+
+    torch.cuda.synchronize()
+    start_time = time.time()
+    # 不能去掉, 因为Wan是50步去噪，所以要换成作者自己的蒸馏的4 step去噪的
+    # pipeline_manager.load_model(args.checkpoint_folder)
+    torch.cuda.synchronize()
+    end_time = time.time()
+
+    print('*' * 40)
+    print('*' * 40)
+    print(f"Load my model time is: {end_time - start_time:.3f} seconds")
+    print('*' * 40)
+    print('*' * 40)
+
 
     # Load prompts
     dataset = TextDataset(args.prompt_file_path)
     prompts = [dataset[0]]
+    print('-' * 40)
+    print('-' * 40)
+    print(f"Prompt is: {prompts}")
+    print('-' * 40)
+    print('-' * 40)
     num_steps = len(pipeline_manager.pipeline.denoising_step_list)
 
     # Run inference

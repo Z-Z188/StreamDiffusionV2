@@ -165,12 +165,7 @@ def generate_process(args, prompt_dict, prepare_event, restart_event, stop_event
 
             noise_scale = args.noise_scale
 
-            noise_scale, current_step = compute_noise_scale_and_step(
-                input_video_original=images,
-                end_idx=first_batch_num_frames,
-                chunck_size=chunk_size,
-                noise_scale=float(noise_scale),
-            )
+            init_noise_scale = args.noise_scale
 
             pipeline_manager.pipeline.vae.model.first_encode = True
             pipeline_manager.pipeline.vae.model.first_decode = True
@@ -178,7 +173,7 @@ def generate_process(args, prompt_dict, prepare_event, restart_event, stop_event
             pipeline_manager.pipeline.crossattn_cache = None
             pipeline_manager.pipeline.block_x = None
             pipeline_manager.pipeline.hidden_states = None
-            latents = pipeline_manager.pipeline.vae.model.stream_encode(images)
+            latents = pipeline_manager.pipeline.vae.stream_encode(images)
             latents = latents.transpose(2, 1).contiguous().to(dtype=torch.bfloat16)
 
             noise = torch.randn_like(latents)
@@ -223,9 +218,10 @@ def generate_process(args, prompt_dict, prepare_event, restart_event, stop_event
             end_idx=first_batch_num_frames,
             chunck_size=chunk_size,
             noise_scale=float(noise_scale),
+            init_noise_scale=float(init_noise_scale),
         )
 
-        latents = pipeline_manager.pipeline.vae.model.stream_encode(images)
+        latents = pipeline_manager.pipeline.vae.stream_encode(images)
         latents = latents.transpose(2, 1).contiguous().to(dtype=torch.bfloat16)
         noise = torch.randn_like(latents)
         noisy_latents = noise * noise_scale + latents * (1 - noise_scale)
