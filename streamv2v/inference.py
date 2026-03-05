@@ -7,6 +7,8 @@ inference pipeline on a single GPU:
 2. DiT inference (using input mode, processing all 30 blocks)
 3. VAE decode output video
 """
+import sys
+sys.path.append("../causvid")
 
 from causvid.models.wan.causal_stream_inference import CausalStreamInferencePipeline
 from diffusers.utils import export_to_video
@@ -144,7 +146,7 @@ class SingleGPUInferencePipeline:
     
     def run_inference(self, input_video_original: torch.Tensor, prompts: list, 
                      num_chuncks: int, chunck_size: int, noise_scale: float, 
-                     output_folder: str, fps: int, num_steps: int, fixed_noise_scale: bool = False):
+                     output_folder: str, fps: int, num_steps: int, fixed_noise_scale: bool = True):
         """
         Run the complete single GPU inference pipeline.
         

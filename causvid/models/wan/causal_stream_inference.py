@@ -6,6 +6,7 @@ from causvid.models import (
 from typing import List
 import torch
 import torch.distributed as dist
+import os
 
 class CausalStreamInferencePipeline(torch.nn.Module):
     def __init__(self, args, device):
@@ -104,10 +105,21 @@ class CausalStreamInferencePipeline(torch.nn.Module):
     ):
         self.device = device
         batch_size = noise.shape[0]
+        
+        cached_embedding_path = f"./text_cache/cached_text_embedding_{text_prompts[0][:20]}.pt"
+        os.makedirs("./text_cache", exist_ok=True)
 
-        self.conditional_dict = self.text_encoder(
-            text_prompts=text_prompts
-        )
+        if os.path.exists(cached_embedding_path):
+            print(f"Attempting to load cached text embedding from '{cached_embedding_path}'...")
+            self.conditional_dict = torch.load(cached_embedding_path, map_location="cpu")
+            # Move the tensor to the correct device and dtype
+            self.conditional_dict["prompt_embeds"] = self.conditional_dict["prompt_embeds"].to(device=self.device, dtype=dtype)
+            print("Successfully loaded and prepared cached text embedding.")
+        else:
+            self.conditional_dict = self.text_encoder(text_prompts=text_prompts)
+            dict_to_save = {"prompt_embeds": self.conditional_dict["prompt_embeds"].cpu()}
+            torch.save(dict_to_save, cached_embedding_path)
+            print(f"Computed and saved text embedding to '{cached_embedding_path}'.")
 
         # Step 1: Initialize KV cache
         if self.kv_cache1 is None:

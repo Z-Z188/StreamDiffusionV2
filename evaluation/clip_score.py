@@ -23,12 +23,13 @@ if __name__ == "__main__":
     os.makedirs("clip_scores", exist_ok=True)
 
     method_names = [
-        "user_study_caus_vid",
-        "user_study_stream_diffusion",
-        "user_study_stream_diffusion_v2",
-        "ablation_noise_scale_0.8",
-        "ablation_num_kv_cache_21",
-        "ablation_num_sink_tokens_0",
+        # "user_study_caus_vid",
+        # "user_study_stream_diffusion",
+        # "user_study_stream_diffusion_v2",
+        # "ablation_noise_scale_0.8",
+        # "ablation_num_kv_cache_21",
+        # "ablation_num_sink_tokens_0",
+        "kv_cache_21"
     ]
 
     with open("evaluation.json", 'r') as file:
@@ -54,7 +55,7 @@ if __name__ == "__main__":
             try:
                 out_json[v] = {}
                 prompt = video_maps[v]
-                video_path = os.path.join(edit_video_dir, f"{v}.mp4")
+                video_path = os.path.join("outputs", edit_video_dir, v, "output_000.mp4")
                 video_embs = []
 
                 # Open the video file

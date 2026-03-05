@@ -113,8 +113,11 @@ def calculate_warp_error_video(model, ref_video_path, edit_video_path):
     edit_frames, _, _ = read_video(str(edit_video_path))
     edit_frames = edit_frames.permute(0, 3, 1, 2)  # (N, H, W, C) -> (N, C, H, W)
 
-    ref_height, ref_width = ref_frames.shape[2], ref_frames.shape[3]
-    edit_frames = torch.nn.functional.interpolate(edit_frames, size=(ref_height, ref_width), mode='bilinear', align_corners=False)
+    # ref_height, ref_width = ref_frames.shape[2], ref_frames.shape[3]
+    # edit_frames = torch.nn.functional.interpolate(edit_frames, size=(ref_height, ref_width), mode='bilinear', align_corners=False)
+    edit_height, edit_width = edit_frames.shape[2], edit_frames.shape[3]
+    ref_frames = torch.nn.functional.interpolate(ref_frames, size=(edit_height, edit_width), mode='bilinear', align_corners=False)
+    print(f"ref_frames shape: {ref_frames.shape}, edit_frames shape: {edit_frames.shape}")
 
     num_frames = edit_frames.shape[0]
     ref_frames = ref_frames[:num_frames]
@@ -124,7 +127,8 @@ def calculate_warp_error_video(model, ref_video_path, edit_video_path):
         bwd_batch = torch.stack([ref_frames[i+1], ref_frames[i]])
         fwd_batch = preprocess(fwd_batch).to("cuda")
         bwd_batch = preprocess(bwd_batch).to("cuda")
-        list_of_flows = model(fwd_batch.to("cuda"), bwd_batch.to("cuda"))
+        with torch.no_grad():
+            list_of_flows = model(fwd_batch.to("cuda"), bwd_batch.to("cuda"))
         predicted_flows = list_of_flows[-1]
         h, w = predicted_flows.shape[2:]
         fwd_occ, bwd_occ = forward_backward_consistency_check(predicted_flows[:1], predicted_flows[1:])  # [1, H, W] float
@@ -150,12 +154,13 @@ if __name__ == "__main__":
     os.makedirs("warp_errors", exist_ok=True)
 
     method_names = [
-        "user_study_caus_vid",
-        "user_study_stream_diffusion",
-        "user_study_stream_diffusion_v2",
-        "ablation_noise_scale_0.8",
-        "ablation_num_kv_cache_21",
-        "ablation_num_sink_tokens_0",
+        # "user_study_caus_vid",
+        # "user_study_stream_diffusion",
+        # "user_study_stream_diffusion_v2",
+        # "ablation_noise_scale_0.8",
+        # "ablation_num_kv_cache_21",
+        # "ablation_num_sink_tokens_0",
+        "kv_cache_21",
     ]
 
     model = raft_large(pretrained=True, progress=False).to("cuda")
@@ -166,7 +171,7 @@ if __name__ == "__main__":
 
     for method_name in method_names:
         print(f"Evaluating {method_name}")
-        ref_video_dir = "source_videos"
+        ref_video_dir = "videos"
         edit_video_dir = f"{method_name}"
 
         video_error = []
@@ -177,10 +182,11 @@ if __name__ == "__main__":
                 vid_name = item['output_video_name']
                 print(f"{vid_name} is being evaluated")
                 ref_video_path = os.path.join(ref_video_dir, f'{src_vid_name}.mp4')
-                edit_video_path = os.path.join(edit_video_dir, f'{vid_name}.mp4')
+                edit_video_path = os.path.join("outputs", edit_video_dir, vid_name, 'output_000.mp4')
                 cur_video_error = calculate_warp_error_video(model, ref_video_path, edit_video_path)
                 out_json[vid_name] = cur_video_error
                 video_error.append(cur_video_error)
+                print(f"Warp error of {vid_name} is {cur_video_error}")
             except:
                 print(f"{vid_name} has error!")
             sys.stdout.flush()
