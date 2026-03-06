@@ -76,7 +76,8 @@ class CausalWanSelfAttention(nn.Module):
         self.qk_norm = qk_norm
         self.eps = eps
         
-        self.sink_size = 0
+        self.sink_size = 3
+        self.adapt_sink_thr = -1
 
         # layers
         self.q = nn.Linear(dim, dim)
@@ -133,9 +134,11 @@ class CausalWanSelfAttention(nn.Module):
             x = flex_attention(
                 query=padded_roped_query.transpose(2, 1),
                 key=padded_roped_key.transpose(2, 1),
-                value=padded_v.transpose(2, 1),
+                value=padded_v.transpose(2, 1),           
                 block_mask=block_mask
             )[:, :, :-padded_length].transpose(2, 1)
+        
+        
         else:
             frame_seqlen = math.prod(grid_sizes[0][1:]).item()
             current_start_frame = current_start // frame_seqlen
@@ -144,16 +147,36 @@ class CausalWanSelfAttention(nn.Module):
             roped_key = causal_rope_apply(
                 k, grid_sizes, freqs, start_frame=current_start_frame).type_as(v)
 
+
             seq_lens = []
             for i, c_start in enumerate(current_start):
                 current_end = c_start + roped_query.shape[1]
                 sink_tokens = self.sink_size * frame_seqlen
+                
+                if sink_tokens > 0 and self.adapt_sink_thr > -1 and v.shape[1] <= frame_seqlen:
+                    # Caculate similarity between new keys/values and the oldest ones in the cache
+                    k_sink_mean = kv_cache["k"][i:i+1, :sink_tokens].reshape(self.sink_size, frame_seqlen, -1).mean(1)
+                    k_new_mean = roped_key[i:i+1].reshape(1, frame_seqlen, -1).mean(1)
+                    k_cos_sim = torch.cosine_similarity(k_sink_mean, k_new_mean, dim=-1)
+
+                    v_sink_mean = kv_cache["v"][i:i+1, :sink_tokens].reshape(self.sink_size, frame_seqlen, -1).mean(1)
+                    v_new_mean = v[i:i+1].reshape(1, frame_seqlen, -1).mean(1)
+                    v_cos_sim = torch.cosine_similarity(v_sink_mean, v_new_mean, dim=-1).mean()
+
+                    avg_cos_sim = (k_cos_sim + v_cos_sim)/2
+                    # When the similarity is low, refresh the sink
+                    if avg_cos_sim.min() < self.adapt_sink_thr:
+                        idx = torch.argmin(avg_cos_sim)
+                        sink_tokens = idx * frame_seqlen
+
                 # If we are using local attention and the current KV cache size is larger than the local attention size, we need to truncate the KV cache
-                kv_cache_size = kv_cache["k"].shape[1]
-                num_new_tokens = roped_query.shape[1]
+                kv_cache_size = kv_cache["k"].shape[1]  # 6144 = 1024 * 6
+                num_new_tokens = roped_query.shape[1]   # num_new_tokens = 1024 = 32*32, 第一次是2048
+                
                 if c_start + num_new_tokens >= kv_cache_size:
                     kv_cache["global_end_index"][i].fill_(c_start)
                     kv_cache["local_end_index"][i].fill_(kv_cache_size)
+
                 if (current_end > kv_cache["global_end_index"][i].item()) and (
                         num_new_tokens + kv_cache["local_end_index"][i].item() > kv_cache_size):
                     # Calculate the number of new tokens added in this step
@@ -163,12 +186,16 @@ class CausalWanSelfAttention(nn.Module):
                     num_rolled_tokens = kv_cache["local_end_index"][i].item() - num_evicted_tokens - sink_tokens
                     kv_cache["k"][i:i+1, sink_tokens:sink_tokens + num_rolled_tokens] = \
                         kv_cache["k"][i:i+1, sink_tokens + num_evicted_tokens:sink_tokens + num_evicted_tokens + num_rolled_tokens].clone()
+                    
                     kv_cache["v"][i:i+1, sink_tokens:sink_tokens + num_rolled_tokens] = \
                         kv_cache["v"][i:i+1, sink_tokens + num_evicted_tokens:sink_tokens + num_evicted_tokens + num_rolled_tokens].clone()
+                    
                     # Insert the new keys/values at the end
+                    # 发生溢出的情况下, local_end_index 恒等于 kv_cache_size
                     local_end_index = kv_cache["local_end_index"][i].item() + current_end - \
                         kv_cache["global_end_index"][i].item() - num_evicted_tokens
                 else:
+                    # current_end - global_end_index: 就是本轮新增 token 的数量, 也不一定，因为对于同一个帧在后面的去噪步数就不是了
                     local_end_index = kv_cache["local_end_index"][i].item() + current_end - kv_cache["global_end_index"][i].item()
 
                 local_start_index = local_end_index - num_new_tokens
@@ -179,7 +206,8 @@ class CausalWanSelfAttention(nn.Module):
 
                 kv_cache["global_end_index"][i].fill_(current_end)
                 kv_cache["local_end_index"][i].fill_(local_end_index)
-            
+           
+            # seq_lens 表示 batch 内每个样本在 KV cache 中当前有效 token 的“序列长度”
             seq_lens = torch.tensor(seq_lens, dtype=torch.int32, device=roped_query.device)
 
             x = flash_attn_interface.flash_attn_with_kvcache(
@@ -259,21 +287,21 @@ class CausalWanAttentionBlock(nn.Module):
             freqs(Tensor): Rope freqs, shape [1024, C / num_heads / 2]
         """
         num_frames, frame_seqlen = e.shape[1], x.shape[1] // e.shape[1]
-        # assert e.dtype == torch.float32
-        # with amp.autocast(dtype=torch.float32):
+
         e = (self.modulation.unsqueeze(1) + e).chunk(6, dim=2)
-        # assert e[0].dtype == torch.float32
 
         # self-attention
+        # 在 x 输入进self-attention之前，经过了e的调制（e是来自于时间步t）
+        # 此时 kv_cache 里写入的 K/V 是 t 的特征, 而不是 t-1 步的特征
         y = self.self_attn(
             (self.norm1(x).unflatten(dim=1, sizes=(num_frames, frame_seqlen))
              * (1 + e[1]) + e[0]).flatten(1, 2),
             seq_lens, grid_sizes,
             freqs, block_mask, kv_cache, current_start, current_end)
 
-        # with amp.autocast(dtype=torch.float32):
+
         x = x + (y.unflatten(dim=1, sizes=(num_frames, frame_seqlen))
-                 * e[2]).flatten(1, 2)
+            * e[2]).flatten(1, 2)
 
         # cross-attention & ffn function
         def cross_attn_ffn(x, context, context_lens, e, crossattn_cache=None):
@@ -283,7 +311,7 @@ class CausalWanAttentionBlock(nn.Module):
                 (self.norm2(x).unflatten(dim=1, sizes=(num_frames,
                  frame_seqlen)) * (1 + e[4]) + e[3]).flatten(1, 2)
             )
-            # with amp.autocast(dtype=torch.float32):
+
             x = x + (y.unflatten(dim=1, sizes=(num_frames,
                      frame_seqlen)) * e[5]).flatten(1, 2)
             return x
@@ -409,8 +437,8 @@ class CausalWanModel(ModelMixin, ConfigMixin):
         self.cross_attn_norm = cross_attn_norm
         self.eps = eps
 
-        # embeddings
-        self.patch_embedding = nn.Conv3d(
+        # embeddings: self.patch_embedding = Conv3d(16, 1536, kernel_size=(1, 2, 2), stride=(1, 2, 2))
+        self.patch_embedding = nn.Conv3d(   # 时间维 stride = 1 → 时间不下采样
             in_dim, dim, kernel_size=patch_size, stride=patch_size)
         self.text_embedding = nn.Sequential(
             nn.Linear(text_dim, dim), nn.GELU(approximate='tanh'),
@@ -584,6 +612,8 @@ class CausalWanModel(ModelMixin, ConfigMixin):
 
         # context
         context_lens = None
+        context = context.to(device, dtype=torch.bfloat16)
+        
         context = self.text_embedding(
             torch.stack([
                 torch.cat(
@@ -610,7 +640,7 @@ class CausalWanModel(ModelMixin, ConfigMixin):
             def custom_forward(*inputs, **kwargs):
                 return module(*inputs, **kwargs)
             return custom_forward
-
+        
         for block_index, block in enumerate(self.blocks):
             if torch.is_grad_enabled() and self.gradient_checkpointing:
                 assert False
@@ -709,6 +739,7 @@ class CausalWanModel(ModelMixin, ConfigMixin):
 
         # context
         context_lens = None
+        
         context = self.text_embedding(
             torch.stack([
                 torch.cat(

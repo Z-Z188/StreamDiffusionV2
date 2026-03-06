@@ -11,6 +11,7 @@
   import { lcmLiveStatus, lcmLiveActions, LCMLiveStatus, streamId } from '$lib/lcmLive';
   import { mediaStreamActions, onFrameChangeStore } from '$lib/mediaStream';
   import { getPipelineValues, deboucedPipelineValues } from '$lib/store';
+  import { browser } from '$app/environment';   // 👈 多加这一行，判断是不是浏览器环境
 
   let pipelineParams: Fields;
   let pipelineInfo: PipelineInfo;
@@ -24,12 +25,29 @@
   let uploadedFile: File | null = null;
   let uploadedVideoUrl: string | null = null;
   let fileInputEl: HTMLInputElement | null = null;
+
+  // 👇 顶层只声明，不访问 window
+  let basePath = '';
+
+  // 这个函数用来拼接带 prefix 的 API 地址
+  function apiUrl(path: string) {
+    return `${basePath}${path}`;
+  }
+
   onMount(() => {
+    // 👇 只在浏览器端才有 window
+    if (browser) {
+      // 当前页面是 /proxy/7860/ 的话，这里就是 "/proxy/7860"
+      basePath = window.location.pathname.replace(/\/$/, '');
+    }
     getSettings();
   });
 
+
   async function getSettings() {
-    const settings = await fetch('/api/settings').then((r) => r.json());
+    const settings = await fetch(apiUrl('/api/settings')).then((r) => r.json());
+
+    
     pipelineParams = settings.input_params.properties;
     pipelineInfo = settings.info.properties;
     isImageMode = pipelineInfo.input_mode.default === PipelineMode.IMAGE;
@@ -48,7 +66,7 @@
     if (!queueCheckerRunning) {
       return;
     }
-    const data = await fetch('/api/queue').then((r) => r.json());
+    const data = await fetch(apiUrl('/api/queue')).then((r) => r.json());
     currentQueueSize = data.queue_size;
     setTimeout(getQueueSize, 10000);
   }

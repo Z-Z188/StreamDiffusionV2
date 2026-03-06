@@ -1,14 +1,14 @@
-# StreamDiffusionV2: An Open-Source Streaming System for Real-Time Interactive Video Generation
+# StreamDiffusionV2: A Streaming System for Dynamic and Interactive Video Generation
 
-[Tianrui Feng](https://jerryfeng2003.github.io/)<sup>*,1</sup>, [Zhi Li](https://scholar.google.com/citations?user=C6kPjgwAAAAJ&hl)<sup>1</sup>, [Haocheng Xi](https://haochengxi.github.io/)<sup>1</sup>, [Muyang Li](https://lmxyy.me/)<sup>2</sup>, [Shuo Yang](https://andy-yang-1.github.io/)<sup>1</sup>, [Xiuyu Li](https://xiuyuli.com/)<sup>1</sup>, [Lvmin Zhang](https://lllyasviel.github.io/lvmin_zhang/)<sup>3</sup>, [Kelly Peng](https://www.linkedin.com/in/kellyzpeng/)<sup>4</sup>, [Song Han](https://hanlab.mit.edu/songhan)<sup>2</sup>, [Maneesh Agrawala](https://graphics.stanford.edu/~maneesh/)<sup>3</sup>, [Kurt Keutzer](https://people.eecs.berkeley.edu/~keutzer/)<sup>1</sup>, [Akio Kodaira](https://scholar.google.com/citations?hl=ja&user=15X3cioAAAAJ)<sup>1</sup>, [Chenfeng Xu](https://www.chenfengx.com/)<sup>†,1,5</sup>
+[Tianrui Feng](https://jerryfeng2003.github.io/)<sup>*,1</sup>, [Zhi Li](https://scholar.google.com/citations?user=C6kPjgwAAAAJ&hl)<sup>1</sup>, [Shuo Yang](https://andy-yang-1.github.io/)<sup>1</sup>, [Haocheng Xi](https://haochengxi.github.io/)<sup>1</sup>, [Muyang Li](https://lmxyy.me/)<sup>2</sup>, [Xiuyu Li](https://xiuyuli.com/)<sup>1</sup>, [Lvmin Zhang](https://lllyasviel.github.io/lvmin_zhang/)<sup>3</sup>, [Keting Yang](https://www.linkedin.com/in/kellyzpeng/)<sup>4</sup>, [Kelly Peng](https://www.linkedin.com/in/kellyzpeng/)<sup>5</sup>, [Song Han](https://hanlab.mit.edu/songhan)<sup>2</sup>, [Maneesh Agrawala](https://graphics.stanford.edu/~maneesh/)<sup>3</sup>, [Kurt Keutzer](https://people.eecs.berkeley.edu/~keutzer/)<sup>1</sup>, [Akio Kodaira](https://scholar.google.com/citations?hl=ja&user=15X3cioAAAAJ)<sup>1</sup>, [Chenfeng Xu](https://www.chenfengx.com/)<sup>†,1,6</sup>
 
-<sup>1</sup>UC Berkeley   <sup>2</sup>MIT   <sup>3</sup>Stanford University   <sup>4</sup>First Intelligence   <sup>5</sup>UT Austin 
+<sup>1</sup>UC Berkeley   <sup>2</sup>MIT   <sup>3</sup>Stanford University  <sup>4</sup>Independent Researcher  <sup>5</sup>First Intelligence   <sup>6</sup>UT Austin 
 
 <sup>†</sup> Project lead, corresponding to [xuchenfeng@berkeley.edu](mailto:xuchenfeng@berkeley.edu)
 
 <sup>*</sup> Work done when Tianrui Feng was a visiting student at UC Berkeley advised by Chenfeng Xu.
 
-[![Project Page](https://img.shields.io/badge/Project-Website-orange)](https://streamdiffusionv2.github.io/)
+[![Project](https://img.shields.io/badge/Homepage-project-orange.svg?logo=googlehome)](https://streamdiffusionv2.github.io/) [![arXiv](https://img.shields.io/badge/Arxiv-2511.07399-b31b1b.svg?logo=arXiv)](https://arxiv.org/abs/2511.07399) [![Hugging Face](https://img.shields.io/badge/HuggingFace-Space-blue.svg?logo=huggingface)](https://huggingface.co/jerryfeng/StreamDiffusionV2)
 
 <p align="center">
   <image src="./assets/demo-1.gif" controls width="800">
@@ -21,7 +21,8 @@
 StreamDiffusionV2 is an open-source interactive diffusion pipeline for real-time streaming applications. It scales across diverse GPU setups, supports flexible denoising steps, and delivers high FPS for creators and platforms. Further details are available on our project [homepage](https://streamdiffusionv2.github.io/).
 
 ## News
-- **[2025-10-18]** Release our model checkpoint on [huggingface](https://huggingface.co/jerryfeng/StreamDiffusionV2/)
+- **[2025-11-10]** 🚀 We have released our [paper](https://arxiv.org/abs/2511.07399) at arXiv. Check it for more details!
+- **[2025-10-18]** Release our model checkpoint on [huggingface](https://huggingface.co/jerryfeng/StreamDiffusionV2/).
 - **[2025-10-06]** 🔥 Our [StreamDiffusionV2](https://github.com/chenfengxu714/StreamDiffusionV2) is publicly released! Check our project [homepage](https://streamdiffusionv2.github.io/) for more details.
 
 ## Prerequisites
@@ -43,9 +44,15 @@ python setup.py develop
 ## Download Checkpoints
 
 ```shell
+# 1.3B Model
 huggingface-cli download --resume-download Wan-AI/Wan2.1-T2V-1.3B --local-dir wan_models/Wan2.1-T2V-1.3B
-huggingface-cli download --resume-download jerryfeng/StreamDiffusionV2 --local-dir ./ckpts/wan_causal_dmd_v2v
+huggingface-cli download --resume-download jerryfeng/StreamDiffusionV2 --local-dir ./ckpts --include "wan_causal_dmd_v2v/*"
+
+# 14B Model
+huggingface-cli download --resume-download Wan-AI/Wan2.1-T2V-14B --local-dir wan_models/Wan2.1-T2V-14B
+huggingface-cli download --resume-download jerryfeng/StreamDiffusionV2 --local-dir ./ckpts --include "wan_causal_dmd_v2v_14b/*"
 ```
+We use the 14B model from [CausVid-Plus](https://github.com/GoatWu/CausVid-Plus) for offline inference demo.
 
 ## Offline Inference
 
@@ -108,11 +115,10 @@ We also especially thank DayDream team for the great collaboration and incorpora
 
 If you find this repository useful in your research, please consider giving a star ⭐ or a citation.
 ```BibTeX
-@article{streamdiffusionv2,
-  title={StreamDiffusionV2: An Open-Sourced Interactive Diffusion Pipeline for Streaming Applications},
-  author={Tianrui Feng and Zhi Li and Haocheng Xi and Muyang Li and Shuo Yang and Xiuyu Li and Lvmin Zhang and Kelly Peng and Song Han and Maneesh Agrawala and Kurt Keutzer and Akio Kodaira and Chenfeng Xu},
-  journal={Project Page},
-  year={2025},
-  url={https://streamdiffusionv2.github.io/}
+@article{feng2025streamdiffusionv2,
+  title={StreamDiffusionV2: A Streaming System for Dynamic and Interactive Video Generation},
+  author={Feng, Tianrui and Li, Zhi and Yang, Shuo and Xi, Haocheng and Li, Muyang and Li, Xiuyu and Zhang, Lvmin and Yang, Keting and Peng, Kelly and Han, Song and others},
+  journal={arXiv preprint arXiv:2511.07399},
+  year={2025}
 }
 ```

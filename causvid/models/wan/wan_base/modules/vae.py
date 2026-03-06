@@ -543,7 +543,7 @@ class WanVAE_(nn.Module):
         self.clear_cache()
         return mu
 
-    def stream_encode(self, x):
+    def stream_encode(self, x, scale):
         # cache
         t = x.shape[2]
         if self.first_encode:
@@ -551,17 +551,18 @@ class WanVAE_(nn.Module):
             self.clear_cache_encode()
             self._enc_conv_idx = [0]
             out = self.encoder(
-                x[:, :, :1, :, :],
+                x[:, :, :1, :, :],  #  # 第 1 帧
                 feat_cache=self._enc_feat_map,
                 feat_idx=self._enc_conv_idx,
                 )
             self._enc_conv_idx = [0]
             out_ = self.encoder(
-                x[:, :, 1:, :, :],
+                x[:, :, 1:, :, :],  # # 剩余帧（T-1帧)
                 feat_cache=self._enc_feat_map,
                 feat_idx=self._enc_conv_idx,
                 )
             out = torch.cat([out, out_], 2)
+
         else:
             out=[]
             for i in range(t//4):
@@ -573,6 +574,12 @@ class WanVAE_(nn.Module):
                     ))
             out = torch.cat(out, 2)
         mu, log_var = self.conv1(out).chunk(2, dim=1)
+        if scale is not None:
+            if isinstance(scale[0], torch.Tensor):
+                mu = (mu - scale[0].view(1, self.z_dim, 1, 1, 1)) * scale[1].view(
+                    1, self.z_dim, 1, 1, 1)
+            else:
+                mu = (mu - scale[0]) * scale[1]
         # self.clear_cache()
         return mu
 
@@ -695,8 +702,11 @@ def _video_vae(pretrained_path=None, z_dim=None, device='cpu', **kwargs):
 
     # load checkpoint
     logging.info(f'loading {pretrained_path}')
+
+    # 不用mmap=True，加载vae是1.136s
+    # 用了是0.12s
     model.load_state_dict(
-        torch.load(pretrained_path, map_location=device), assign=True)
+        torch.load(pretrained_path, map_location=device, mmap=True), assign=True)
 
     return model
 

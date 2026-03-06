@@ -213,7 +213,6 @@ __marimo__/
 ckpt/
 ckpts/
 outputs_video/
-outputs/
 wan_models/
 .DS_Store
 *.pt
