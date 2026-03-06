@@ -215,3 +215,6 @@ ckpts/
 outputs_video/
 wan_models/
 .DS_Store
+*.pt
+*.mp4
+*.txt

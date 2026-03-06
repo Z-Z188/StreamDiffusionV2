@@ -138,7 +138,6 @@ class WanDiffusionWrapper(DiffusionModelInterface):
     def __init__(self, model_type="T2V-1.3B"):
         super().__init__()
         
-        # 不管VAE
         # self.model = WanModel.from_pretrained(os.path.join(repo_root, "wan_models/Wan2.1-T2V-1.3B/"))
         # self.model.eval()
 
